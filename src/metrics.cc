@@ -17,7 +17,7 @@
 
 #include <atomic>
 #include <cstdint>
-#include <format>
+#include <fmt/format.h>
 
 namespace arena {
 
@@ -27,10 +27,10 @@ thread_local LocalArenaMetrics local_arena_metrics = LocalArenaMetrics();
 
 }  // namespace arena
 
-namespace std {
-auto std::formatter<atomic<uint64_t>>::format(const atomic<uint64_t>& data, std::format_context& ctx) const noexcept
+namespace fmt {
+auto formatter<std::atomic<uint64_t>>::format(const std::atomic<uint64_t>& data, format_context& ctx) const noexcept
   -> decltype(ctx.out()) {
     uint64_t value = data.load(std::memory_order::relaxed);
-    return std::formatter<uint64_t>::format(value, ctx);
+    return formatter<uint64_t>::format(value, ctx);
 }
-}  // namespace std
+}  // namespace fmt
