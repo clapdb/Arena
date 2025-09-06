@@ -19,8 +19,6 @@
 #include <memory_resource>
 #include <stdint.h>  // for uint64_t, uint8_t
 
-#include <boost/assert/source_location.hpp>
-#include <boost/core/demangle.hpp>  // for demangle
 #include <cassert>    // for assert macro
 #include <concepts>
 #include <cstdint>
@@ -36,11 +34,10 @@
 #include <unordered_map>  // for polymorphic_allocator
 #include <utility>        // for exchange, forward
 #include <variant>
+#include <source_location>  // for source_location, current
 
 #include "arena/align.hpp"  // for AlignUpTo
 #include "arena/arenahelper.hpp"  // for ArenaHelper
-
-#define TYPENAME(type) ::boost::core::demangle(typeid(type).name())  // NOLINT
 
 #ifndef Assert
 #define Assert(cond, msg) assert((cond) && msg)  // NOLINT
@@ -180,7 +177,7 @@ class Arena
         // NULL and not use the cookie feature).
         // on_arena_reset and on_arena_destruction also receive the space used in
         // the arena just before the reset.
-        void* (*on_arena_init)(Arena* arena, const boost::source_location& loc){nullptr};
+        void* (*on_arena_init)(Arena* arena, const std::source_location& loc){nullptr};
         void (*on_arena_reset)(Arena* arena, void* cookie, uint64_t space_used, uint64_t space_wasted){nullptr};
         void (*on_arena_allocation)(const type_info* alloc_type, uint64_t alloc_size, void* cookie){nullptr};
         void (*on_arena_newblock)(uint64_t blk_num, uint64_t blk_size, void* cookie){nullptr};
@@ -336,7 +333,7 @@ class Arena
      * Arena constructor copy version, copy the Options content to Arena
      */
     explicit Arena(const Options& ops) : _options(ops), _last_block(nullptr), _cookie(nullptr), _space_allocated(0ULL) {
-        init(BOOST_CURRENT_LOCATION);
+        init(std::source_location::current());
     }
 
     /*
@@ -344,7 +341,7 @@ class Arena
      */
     explicit Arena(Options&& ops) noexcept
         : _options(ops), _last_block(nullptr), _cookie(nullptr), _space_allocated(0ULL) {
-        init(BOOST_CURRENT_LOCATION);
+        init(std::source_location::current());
     }
 
     /*
@@ -441,7 +438,7 @@ class Arena
             auto output_message = std::format(
               "CreateArray need too many memory, that more than max of uint64_t, the num of array is {}, and the Type "
               "is {}, sizeof T is {}",
-              num, TYPENAME(T), sizeof(T));
+              num, typeid(T).name(), sizeof(T));
             _options.logger_func(output_message);
         }
         const uint64_t size = sizeof(T) * num;
@@ -522,7 +519,7 @@ class Arena
      * init the arena
      * call the callback to monitor and metrics: this arena was inited.
      */
-    [[gnu::always_inline]] inline void init(const boost::source_location& loc) noexcept {
+    [[gnu::always_inline]] inline void init(const std::source_location& loc) noexcept {
         try {
             _resource = new memory_resource{this};
         } catch (std::bad_alloc& ex) {

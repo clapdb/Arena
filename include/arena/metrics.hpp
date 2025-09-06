@@ -20,7 +20,6 @@
 
 #include <array>   // for array, array<>::value_type
 #include <atomic>  // for atomic, memory_order, memory...
-#include <boost/assert/source_location.hpp>
 #include <chrono>         // for operator""ms, duration, stea...
 #include <compare>        // for operator<=, strong_ordering
 #include <cstdint>        // for uint64_t, uint32_t
@@ -30,6 +29,7 @@
 #include <typeinfo>       // for type_info
 #include <unordered_map>  // for unordered_map, operator==
 #include <utility>        // for tuple_element<>::type
+#include <source_location>  // for source_location, source_loc...
 
 #include "arena.hpp"  // for Arena
                       //
@@ -207,7 +207,7 @@ struct LocalArenaMetrics
         }
     }
 
-    [[gnu::always_inline]] inline void increase_arena_alloc_counter(const boost::source_location& loc, uint64_t size) {
+    [[gnu::always_inline]] inline void increase_arena_alloc_counter(const std::source_location& loc, uint64_t size) {
         const std::string key = std::string(loc.file_name()) + ":" + std::to_string(loc.line());
         arena_alloc_counter[key] += size;
     }
@@ -244,13 +244,13 @@ extern thread_local LocalArenaMetrics local_arena_metrics;
 struct ArenaMetricsCookie
 {
     steady_clock::time_point init_time_point;
-    boost::source_location init_location;  // arena.init() source_location
-    ArenaMetricsCookie(steady_clock::time_point init_tp, const boost::source_location& init_loc)
+    std::source_location init_location;  // arena.init() source_location
+    ArenaMetricsCookie(steady_clock::time_point init_tp, const std::source_location& init_loc)
         : init_time_point(init_tp), init_location(init_loc) {}
 };
 
 [[gnu::always_inline]] inline auto metrics_probe_on_arena_init([[maybe_unused]] arena::Arena* arena,
-                                                               const boost::source_location& loc) -> void* {
+                                                               const std::source_location& loc) -> void* {
     ++local_arena_metrics.init_count;
     auto* cookie = new ArenaMetricsCookie(steady_clock::now(), loc);
     return cookie;
