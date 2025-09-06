@@ -32,7 +32,7 @@ jobs:
     - name: Install dependencies (Ubuntu)
       run: |
         sudo apt-get update
-        sudo apt-get install -y cmake build-essential
+        sudo apt-get install -y cmake build-essential libfmt-dev
         if [ "${{ matrix.compiler.name }}" = "clang" ]; then
           sudo apt-get install -y clang libc++-dev libc++abi-dev
         fi
@@ -115,7 +115,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y clang libc++-dev libc++abi-dev
+        sudo apt-get install -y clang libc++-dev libc++abi-dev libfmt-dev
     
     - name: Configure with AddressSanitizer
       run: |
@@ -162,7 +162,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y gcc g++ gcov lcov
+        sudo apt-get install -y gcc g++ gcov lcov libfmt-dev
     
     - name: Configure with coverage
       run: |

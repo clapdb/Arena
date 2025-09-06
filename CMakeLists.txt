@@ -19,6 +19,9 @@ endif()
 # Global compiler flags
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-declarations -Wno-error=cpp -frtti")
 
+# Find packages
+find_package(fmt REQUIRED)
+
 # Add include directories
 include_directories(include)
 include_directories(doctest)
