@@ -1,0 +1,196 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build-and-test:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, ubuntu-22.04]
+        compiler:
+          - name: gcc
+            cxx: g++
+            cc: gcc
+            stdlib: libstdc++
+          - name: clang
+            cxx: clang++
+            cc: clang
+            stdlib: libc++
+        build_type: [Debug, Release]
+    
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Install dependencies (Ubuntu)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake build-essential
+        if [ "${{ matrix.compiler.name }}" = "clang" ]; then
+          sudo apt-get install -y clang libc++-dev libc++abi-dev
+        fi
+    
+    - name: Configure CMake (GCC)
+      if: matrix.compiler.name == 'gcc'
+      run: |
+        cmake -B build \
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+          -DCMAKE_CXX_COMPILER=${{ matrix.compiler.cxx }} \
+          -DCMAKE_C_COMPILER=${{ matrix.compiler.cc }}
+    
+    - name: Configure CMake (Clang with libc++)
+      if: matrix.compiler.name == 'clang'
+      run: |
+        cmake -B build \
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+          -DCMAKE_CXX_COMPILER=${{ matrix.compiler.cxx }} \
+          -DCMAKE_C_COMPILER=${{ matrix.compiler.cc }} \
+          -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
+          -DCMAKE_EXE_LINKER_FLAGS="-stdlib=libc++ -lc++abi"
+    
+    - name: Build
+      run: cmake --build build --config ${{ matrix.build_type }} -j$(nproc)
+    
+    - name: Test
+      run: |
+        cd build
+        ./tests/arena_test
+    
+    - name: Run tests with verbose output (on failure)
+      if: failure()
+      run: |
+        cd build
+        ./tests/arena_test --verbose
+
+  static-analysis:
+    runs-on: ubuntu-24.04
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Install static analysis tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y clang-tidy cppcheck
+    
+    - name: Configure CMake
+      run: |
+        cmake -B build \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+          -DCMAKE_CXX_COMPILER=clang++ \
+          -DCMAKE_C_COMPILER=clang
+    
+    - name: Run clang-tidy
+      run: |
+        clang-tidy src/*.cc include/arena/*.hpp \
+          -p build \
+          -- -std=c++20 -I include -I doctest
+    
+    - name: Run cppcheck
+      run: |
+        cppcheck --enable=all --std=c++20 \
+          --suppress=missingIncludeSystem \
+          --suppress=unusedFunction \
+          -I include -I doctest \
+          src/ include/
+
+  memory-sanitizer:
+    runs-on: ubuntu-24.04
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y clang libc++-dev libc++abi-dev
+    
+    - name: Configure with AddressSanitizer
+      run: |
+        cmake -B build-asan \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_CXX_COMPILER=clang++ \
+          -DCMAKE_C_COMPILER=clang \
+          -DCMAKE_CXX_FLAGS="-stdlib=libc++ -fsanitize=address -fno-omit-frame-pointer" \
+          -DCMAKE_EXE_LINKER_FLAGS="-stdlib=libc++ -lc++abi -fsanitize=address"
+    
+    - name: Build with AddressSanitizer
+      run: cmake --build build-asan -j$(nproc)
+    
+    - name: Test with AddressSanitizer
+      run: |
+        cd build-asan
+        ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 ./tests/arena_test
+    
+    - name: Configure with UndefinedBehaviorSanitizer
+      run: |
+        cmake -B build-ubsan \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_CXX_COMPILER=clang++ \
+          -DCMAKE_C_COMPILER=clang \
+          -DCMAKE_CXX_FLAGS="-stdlib=libc++ -fsanitize=undefined -fno-omit-frame-pointer" \
+          -DCMAKE_EXE_LINKER_FLAGS="-stdlib=libc++ -lc++abi -fsanitize=undefined"
+    
+    - name: Build with UndefinedBehaviorSanitizer
+      run: cmake --build build-ubsan -j$(nproc)
+    
+    - name: Test with UndefinedBehaviorSanitizer
+      run: |
+        cd build-ubsan
+        UBSAN_OPTIONS=abort_on_error=1 ./tests/arena_test
+
+  coverage:
+    runs-on: ubuntu-24.04
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc g++ gcov lcov
+    
+    - name: Configure with coverage
+      run: |
+        cmake -B build-coverage \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_CXX_COMPILER=g++ \
+          -DCMAKE_C_COMPILER=gcc \
+          -DCMAKE_CXX_FLAGS="--coverage -fprofile-arcs -ftest-coverage" \
+          -DCMAKE_EXE_LINKER_FLAGS="--coverage"
+    
+    - name: Build with coverage
+      run: cmake --build build-coverage -j$(nproc)
+    
+    - name: Run tests for coverage
+      run: |
+        cd build-coverage
+        ./tests/arena_test
+    
+    - name: Generate coverage report
+      run: |
+        cd build-coverage
+        lcov --directory . --capture --output-file coverage.info
+        lcov --remove coverage.info '/usr/*' --output-file coverage.info
+        lcov --remove coverage.info '*/doctest/*' --output-file coverage.info
+        lcov --list coverage.info
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: build-coverage/coverage.info
+        fail_ci_if_error: true
