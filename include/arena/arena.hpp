@@ -24,7 +24,7 @@
 #include <cstdint>
 #include <cstdlib>    // for free, malloc, size_t
 #include <exception>  // for type_info
-#include <format>
+#include <fmt/format.h>
 #include <iostream>       // for endl, basic_ostream, cerr
 #include <limits>         // for numeric_limits
 #include <new>            // for operator new, bad_alloc
@@ -435,7 +435,7 @@ class Arena
         requires TriviallyDestructible<T>
     {
         if (num > std::numeric_limits<uint64_t>::max() / sizeof(T)) {
-            auto output_message = std::format(
+            auto output_message = fmt::format(
               "CreateArray need too many memory, that more than max of uint64_t, the num of array is {}, and the Type "
               "is {}, sizeof T is {}",
               num, typeid(T).name(), sizeof(T));
