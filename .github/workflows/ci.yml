@@ -32,7 +32,7 @@ jobs:
     - name: Install dependencies (Ubuntu)
       run: |
         sudo apt-get update
-        sudo apt-get install -y cmake libfmt-dev
+        sudo apt-get install -y cmake
         if [ "${{ matrix.compiler.name }}" = "gcc" ]; then
           # Install GCC 14
           sudo apt-get install -y software-properties-common
@@ -134,7 +134,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libfmt-dev wget lsb-release software-properties-common gnupg
+        sudo apt-get install -y wget lsb-release software-properties-common gnupg
         # Install Clang 20
         wget https://apt.llvm.org/llvm.sh
         chmod +x llvm.sh
@@ -190,7 +190,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y lcov libfmt-dev software-properties-common
+        sudo apt-get install -y lcov software-properties-common
         # Install GCC 14
         sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
         sudo apt-get update
