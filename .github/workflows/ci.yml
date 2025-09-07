@@ -109,11 +109,13 @@ jobs:
           -DCMAKE_CXX_COMPILER=clang++-20 \
           -DCMAKE_C_COMPILER=clang-20
     
+    - name: Build project to generate compile_commands.json
+      run: cmake --build build -j$(nproc)
+    
     - name: Run clang-tidy
       run: |
         clang-tidy-20 src/*.cc include/arena/*.hpp \
-          -p build \
-          -- -std=c++20 -I include -I doctest
+          -p build
     
     - name: Run cppcheck
       run: |
