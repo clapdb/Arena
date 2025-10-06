@@ -27,4 +27,6 @@ include_directories(fmt/include)
 # Add subdirectories
 add_subdirectory(src)
 add_subdirectory(tests)
-add_subdirectory(fmt)
+if(NOT TARGET fmt::fmt)
+    add_subdirectory(fmt)
+endif()
