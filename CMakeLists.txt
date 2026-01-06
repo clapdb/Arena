@@ -28,6 +28,8 @@ include_directories(fmt/include)
 add_subdirectory(src)
 add_subdirectory(tests)
 add_subdirectory(bench)
-if(NOT TARGET fmt::fmt)
+
+# When building as FBEC_MODULE, skip fmt build - parent project provides it
+if(NOT FBEC_MODULE AND NOT TARGET fmt::fmt)
     add_subdirectory(fmt)
 endif()
