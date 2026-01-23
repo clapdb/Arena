@@ -44,9 +44,10 @@ auto Arena::Block::AlignPos(char *ptr, uint64_t alignment) noexcept
 }
 /*
  * will generate a new Block with a good size.
+ * Returns Expected<Block*> for monadic error handling.
  */
 auto Arena::newBlock(uint64_t min_bytes, Block *prev_block) noexcept
-    -> Arena::Block * {
+    -> Expected<Arena::Block *> {
   uint64_t required_bytes = min_bytes + kBlockHeaderSize;
   uint64_t size = 0;
 
@@ -56,7 +57,7 @@ auto Arena::newBlock(uint64_t min_bytes, Block *prev_block) noexcept
                     "kBlockHeaderSize more than uint64_t max.",
                     min_bytes);
     _options.logger_func(output_message);
-    return nullptr;
+    return std::unexpected(ArenaError::OverflowDetected);
   }
 
   // it was not called in the Arena's first chance.
@@ -94,7 +95,7 @@ auto Arena::newBlock(uint64_t min_bytes, Block *prev_block) noexcept
   // if mem == nullptr, means no memory available for current os status,
   // the placement new will trigger a segment-fault
   if (mem == nullptr) [[unlikely]] {
-    return nullptr;
+    return std::unexpected(ArenaError::AllocationFailed);
   }
 
   // call the on_arena_newblock callback
@@ -127,24 +128,26 @@ void Arena::Block::Reset() noexcept {
 
 /*
  * allocate a piece of memory that aligned.
- * if return nullptr means failure
+ * Returns Expected<char*> for monadic error handling.
  */
 auto Arena::allocateAligned(uint64_t bytes, uint64_t alignment) noexcept
-    -> char * {
+    -> Expected<char *> {
   uint64_t needed = align_size(bytes);
-  if (need_create_new_block(needed, alignment)) [[unlikely]] {
-    Block *curr = newBlock(needed, _last_block);
-    if (curr != nullptr) [[likely]] {
-      _last_block = curr;
-    } else {
-      return nullptr;
+
+  auto ensure_space = [&, this]() -> Expected<void> {
+    if (!need_create_new_block(needed, alignment)) {
+      return {};
     }
-  }
-  char *result = _last_block->alloc(needed, alignment);
-  // re make sure aligned in debug model
-  Assert((reinterpret_cast<uint64_t>(result) & kByteSizeMask) == 0,
-         "alloc result should aligned kByteSize"); // NOLINT
-  return result;
+    return newBlock(needed, _last_block)
+        .transform([&, this](Block *block) { _last_block = block; });
+  };
+
+  return ensure_space().transform([&, this]() {
+    char *ptr = _last_block->alloc(needed, alignment);
+    Assert((reinterpret_cast<uint64_t>(ptr) & kByteSizeMask) == 0,
+           "alloc result should aligned kByteSize");
+    return ptr;
+  });
 }
 
 auto Arena::check(const char *ptr) -> ArenaContainStatus {
