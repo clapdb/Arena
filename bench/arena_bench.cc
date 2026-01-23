@@ -60,7 +60,7 @@ int main() {
 
     Arena arena(Arena::Options::GetDefaultOptions());
     bench.run("Arena::AllocateAligned", [&]() {
-      void *p = arena.AllocateAligned(32);
+      auto p = arena.AllocateAligned(32).value();
       nb::doNotOptimizeAway(p);
     });
 
@@ -86,7 +86,7 @@ int main() {
 
     Arena arena(Arena::Options::GetDefaultOptions());
     bench.run("Arena::AllocateAligned", [&]() {
-      void *p = arena.AllocateAligned(512);
+      auto p = arena.AllocateAligned(512).value();
       nb::doNotOptimizeAway(p);
     });
 
@@ -112,7 +112,7 @@ int main() {
     opts.huge_block_size = 64 * 1024 * 1024;
     Arena arena(opts);
     bench.run("Arena::AllocateAligned", [&]() {
-      void *p = arena.AllocateAligned(4096);
+      auto p = arena.AllocateAligned(4096).value();
       nb::doNotOptimizeAway(p);
     });
 
@@ -139,7 +139,7 @@ int main() {
     Arena arena(Arena::Options::GetDefaultOptions());
     bench.run("Arena + Reset", [&]() {
       for (int i = 0; i < 1000; ++i) {
-        void *p = arena.AllocateAligned(64);
+        auto p = arena.AllocateAligned(64).value();
         nb::doNotOptimizeAway(p);
       }
       arena.Reset();
@@ -169,7 +169,7 @@ int main() {
 
     Arena arena(Arena::Options::GetDefaultOptions());
     bench.run("Arena::Create<T>", [&]() {
-      auto *p = arena.Create<TestObject>();
+      auto p = arena.Create<TestObject>().value();
       nb::doNotOptimizeAway(p);
     });
 
@@ -195,7 +195,7 @@ int main() {
 
     Arena arena(Arena::Options::GetDefaultOptions());
     bench.run("Arena::Create<T>", [&]() {
-      auto *p = arena.Create<SimpleObject>();
+      auto p = arena.Create<SimpleObject>().value();
       nb::doNotOptimizeAway(p);
     });
 
@@ -255,8 +255,8 @@ int main() {
     Arena arena(Arena::Options::GetDefaultOptions());
     size_t idx = 0;
     bench.run("Arena::AllocateAligned", [&]() {
-      void *p =
-          arena.AllocateAligned(random_sizes[idx++ % random_sizes.size()]);
+      auto p = arena.AllocateAligned(random_sizes[idx++ % random_sizes.size()])
+                   .value();
       nb::doNotOptimizeAway(p);
     });
 
@@ -281,7 +281,7 @@ int main() {
 
     Arena arena(Arena::Options::GetDefaultOptions());
     bench.run("Arena + touch", [&]() {
-      char *p = arena.AllocateAligned(64);
+      char *p = arena.AllocateAligned(64).value();
       for (int i = 0; i < 64; i += 8) {
         p[i] = static_cast<char>(i);
       }
@@ -316,7 +316,7 @@ int main() {
     Arena arena(Arena::Options::GetDefaultOptions());
     bench.run("Arena + Reset", [&]() {
       for (int i = 0; i < 100; ++i) {
-        void *p = arena.AllocateAligned(pattern[i % pattern.size()]);
+        auto p = arena.AllocateAligned(pattern[i % pattern.size()]).value();
         nb::doNotOptimizeAway(p);
       }
       arena.Reset();

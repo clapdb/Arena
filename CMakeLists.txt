@@ -2,12 +2,12 @@ cmake_minimum_required(VERSION 3.10)
 
 project(Arena
     VERSION 1.0.0
-    DESCRIPTION "A C++20 memory allocation library inspired by the Chromium project"
+    DESCRIPTION "A C++23 memory allocation library inspired by the Chromium project"
     LANGUAGES CXX
 )
 
-# Set C++20 standard
-set(CMAKE_CXX_STANDARD 20)
+# Set C++23 standard (required for std::expected)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 

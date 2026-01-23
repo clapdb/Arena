@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <cstdlib>   // for free, malloc, size_t
 #include <exception> // for type_info
+#include <expected>  // for std::expected
 #include <fmt/format.h>
 #include <iostream>        // for endl, basic_ostream, cerr
 #include <limits>          // for numeric_limits
@@ -49,6 +50,23 @@ using align::AlignUpTo;
 using ::std::size_t;
 using ::std::type_info;
 using std::pmr::memory_resource;
+
+/*
+ * ArenaError enum for std::expected error types.
+ * Provides rich error information instead of just nullptr.
+ */
+enum class ArenaError : uint8_t {
+  AllocationFailed,   // block_alloc returned nullptr
+  OverflowDetected,   // size calculation overflow
+  CleanupFailed,      // cleanup registration failed
+  ResourceInitFailed, // memory_resource creation failed
+};
+
+/*
+ * Expected<T> alias for Arena operations.
+ * Enables monadic error handling with and_then/transform/or_else.
+ */
+template <typename T> using Expected = std::expected<T, ArenaError>;
 
 static void default_logger_func(const std::string &output) {
   std::cerr << output << std::endl;
@@ -211,6 +229,73 @@ public:
           .logger_func = &default_logger_func,
       };
     }
+
+    [[nodiscard, gnu::always_inline]] inline static constexpr auto
+    EmptyOptions() -> Options {
+      return {};
+    }
+
+    // Monadic builder-style setters
+    [[nodiscard]] constexpr auto NormalBlockSize(uint64_t v) && -> Options {
+      normal_block_size = v;
+      return std::move(*this);
+    }
+
+    [[nodiscard]] constexpr auto HugeBlockSize(uint64_t v) && -> Options {
+      huge_block_size = v;
+      return std::move(*this);
+    }
+
+    [[nodiscard]] constexpr auto InitBlockSize(uint64_t v) && -> Options {
+      suggested_init_block_size = v;
+      return std::move(*this);
+    }
+
+    [[nodiscard]] constexpr auto Alloc(void *(*f)(std::size_t)) && -> Options {
+      block_alloc = f;
+      return std::move(*this);
+    }
+
+    [[nodiscard]] constexpr auto Dealloc(void (*f)(void *)) && -> Options {
+      block_dealloc = f;
+      return std::move(*this);
+    }
+
+    [[nodiscard]] constexpr auto
+    Logger(void (*f)(const std::string &)) && -> Options {
+      logger_func = f;
+      return std::move(*this);
+    }
+
+    [[nodiscard]] constexpr auto
+    OnInit(void *(*f)(Arena *, const std::source_location &)) && -> Options {
+      on_arena_init = f;
+      return std::move(*this);
+    }
+
+    [[nodiscard]] constexpr auto OnReset(void (*f)(Arena *, void *, uint64_t,
+                                                   uint64_t)) && -> Options {
+      on_arena_reset = f;
+      return std::move(*this);
+    }
+
+    [[nodiscard]] constexpr auto
+    OnAllocation(void (*f)(const type_info *, uint64_t, void *)) && -> Options {
+      on_arena_allocation = f;
+      return std::move(*this);
+    }
+
+    [[nodiscard]] constexpr auto OnNewblock(void (*f)(uint64_t, uint64_t,
+                                                      void *)) && -> Options {
+      on_arena_newblock = f;
+      return std::move(*this);
+    }
+
+    [[nodiscard]] constexpr auto OnDestruction(
+        void *(*f)(Arena *, void *, uint64_t, uint64_t)) && -> Options {
+      on_arena_destruction = f;
+      return std::move(*this);
+    }
   }; // struct Options
 
   /*
@@ -349,8 +434,9 @@ public:
   protected:
     auto do_allocate(size_t bytes, size_t alignment) noexcept
         -> void * override {
-      return reinterpret_cast<char *>(_arena->allocateAligned(
-          bytes, std::max<uint64_t>(kByteSize, alignment)));
+      return _arena->allocateAligned(bytes, std::max<uint64_t>(kByteSize, alignment))
+          .transform([](char *ptr) { return static_cast<void *>(ptr); })
+          .value_or(nullptr);
     }
 
     void do_deallocate([[maybe_unused]] void * /*unused*/,
@@ -369,21 +455,39 @@ public:
   };
 
   /*
+   * Factory function for creating Arena with error handling.
+   * Returns Expected<Arena> for monadic error handling.
+   * This is the preferred way to create an Arena.
+   */
+  [[nodiscard]] static auto Make(Options opts,
+                                 const std::source_location &loc =
+                                     std::source_location::current()) noexcept
+      -> Expected<Arena> {
+    Arena arena(std::move(opts), loc);
+    if (arena._resource == nullptr) {
+      return std::unexpected(ArenaError::ResourceInitFailed);
+    }
+    return arena;
+  }
+
+  /*
    * Arena constructor copy version, copy the Options content to Arena
+   * @deprecated Use Arena::Make() for proper error handling.
    */
   explicit Arena(const Options &ops)
       : _options(ops), _last_block(nullptr), _cookie(nullptr),
         _space_allocated(0ULL) {
-    init(std::source_location::current());
+    (void)init(std::source_location::current());
   }
 
   /*
    * Arena constructor move version, just support eXpire Options object.
+   * @deprecated Use Arena::Make() for proper error handling.
    */
   explicit Arena(Options &&ops) noexcept
       : _options(ops), _last_block(nullptr), _cookie(nullptr),
         _space_allocated(0ULL) {
-    init(std::source_location::current());
+    (void)init(std::source_location::current());
   }
 
   /*
@@ -406,9 +510,10 @@ public:
    * Own function is used to control the memory and object outside of Arena.
    * this function just register the destructor to the Arena, to make sure the
    * Object owned has same life-cycle as the Arena object.
+   * Returns Expected<void> for monadic error handling.
    */
   template <NonConstructable T>
-  [[gnu::noinline]] auto Own(T *obj) noexcept -> bool {
+  [[gnu::noinline]] auto Own(T *obj) noexcept -> Expected<void> {
     return addCleanup(obj, &arena_delete_object<T>);
   }
 
@@ -453,31 +558,33 @@ public:
    * Create by the Arena, and register cleanup function if needed
    * always allocating in the arena memory
    * the type T should is Creatable
+   * Returns Expected<T*> for monadic error handling.
    */
   template <Creatable T, typename... Args>
-  [[nodiscard]] auto Create(Args &&...args) noexcept -> T * {
-    char *ptr = allocateAligned(sizeof(T));
-    if (ptr != nullptr) [[likely]] {
-      Construct<T>(ptr, *this, std::forward<Args>(args)...);
-      T *result = reinterpret_cast<T *>(ptr);
-      if (!RegisterDestructor<T>(result)) [[unlikely]] {
-        return nullptr;
-      }
-      if (_options.on_arena_allocation != nullptr) [[unlikely]] {
-        _options.on_arena_allocation(&typeid(T), sizeof(T), _cookie);
-      }
-      return result;
-    }
-    return nullptr;
+  [[nodiscard]] auto Create(Args &&...args) noexcept -> Expected<T *> {
+    return allocateAligned(sizeof(T))
+        .transform([&, this](char *ptr) {
+          Construct<T>(ptr, *this, std::forward<Args>(args)...);
+          return reinterpret_cast<T *>(ptr);
+        })
+        .and_then([&, this](T *result) -> Expected<T *> {
+          return RegisterDestructor<T>(result).transform([&, this, result]() {
+            if (_options.on_arena_allocation != nullptr) [[unlikely]] {
+              _options.on_arena_allocation(&typeid(T), sizeof(T), _cookie);
+            }
+            return result;
+          });
+        });
   }
 
   /*
    * Create Array of Objects with num length.
    * T should be Creatable, and TriviallyDestructible.
    * because CreateArray do not RegisterDestructor.
+   * Returns Expected<T*> for monadic error handling.
    */
   template <Creatable T>
-  [[nodiscard]] auto CreateArray(uint64_t num) noexcept -> T *
+  [[nodiscard]] auto CreateArray(uint64_t num) noexcept -> Expected<T *>
     requires TriviallyDestructible<T>
   {
     if (num > std::numeric_limits<uint64_t>::max() / sizeof(T)) {
@@ -487,11 +594,10 @@ public:
                       "is {}, sizeof T is {}",
                       num, typeid(T).name(), sizeof(T));
       _options.logger_func(output_message);
-      return nullptr;
+      return std::unexpected(ArenaError::OverflowDetected);
     }
     const uint64_t size = sizeof(T) * num;
-    char *ptr = allocateAligned(size);
-    if (ptr != nullptr) [[likely]] {
+    return allocateAligned(size).transform([&](char *ptr) {
       T *curr = reinterpret_cast<T *>(ptr);
       for (uint64_t i = 0; i < num; ++i) {
         Construct<T>(curr++, *this);
@@ -500,44 +606,43 @@ public:
         _options.on_arena_allocation(&typeid(T), size, _cookie);
       }
       return reinterpret_cast<T *>(ptr);
-    }
-    return nullptr;
+    });
   }
 
   /*
    * Allocate a piece of aligned memory in the arena.
-   * return nullptr means failure
+   * Returns Expected<char*> for monadic error handling.
    * this function is used for replacement of std::malloc.
    */
   [[nodiscard]] auto AllocateAligned(uint64_t bytes,
                                      uint64_t alignment = kByteSize) noexcept
-      -> char * {
-    if (char *ptr = allocateAligned(bytes, alignment); ptr != nullptr)
-        [[likely]] {
+      -> Expected<char *> {
+    return allocateAligned(bytes, alignment).transform([&](char *ptr) {
       if (_options.on_arena_allocation != nullptr) [[unlikely]] {
         _options.on_arena_allocation(nullptr, bytes, _cookie);
       }
       return ptr;
-    }
-    return nullptr;
+    });
   }
 
   /*
    * Allocate a piece of aligned memory, and place a cleanup node in end of
-   * block. return nullptr means failure
+   * block. Returns Expected<char*> for monadic error handling.
    */
   [[nodiscard]] auto
   AllocateAlignedAndAddCleanup(uint64_t bytes, void (*cleanup)(void *),
-                               void *element = nullptr) noexcept -> char * {
-    if (char *ptr = allocateAligned(bytes); ptr != nullptr) [[likely]] {
-      if (addCleanup(element == nullptr ? ptr : element, cleanup)) [[likely]] {
-        if (_options.on_arena_allocation != nullptr) [[unlikely]] {
-          _options.on_arena_allocation(nullptr, bytes, _cookie);
-        }
-        return ptr;
-      }
-    }
-    return nullptr;
+                               void *element = nullptr) noexcept
+      -> Expected<char *> {
+    return allocateAligned(bytes).and_then(
+        [&, this](char *ptr) -> Expected<char *> {
+          return addCleanup(element == nullptr ? ptr : element, cleanup)
+              .transform([&, this, ptr]() {
+                if (_options.on_arena_allocation != nullptr) [[unlikely]] {
+                  _options.on_arena_allocation(nullptr, bytes, _cookie);
+                }
+                return ptr;
+              });
+        });
   }
 
   [[gnu::always_inline]] inline auto get_memory_resource() noexcept
@@ -568,33 +673,59 @@ public:
 
 private:
   /*
+   * Private constructor for Make factory.
+   * Takes explicit source_location to avoid evaluation at wrong call site.
+   */
+  Arena(Options &&ops, const std::source_location &loc) noexcept
+      : _options(ops), _last_block(nullptr), _cookie(nullptr),
+        _space_allocated(0ULL) {
+    (void)init(loc);
+  }
+
+  /*
    * init the arena
    * call the callback to monitor and metrics: this arena was inited.
+   * Returns Expected<void> for monadic error handling.
    */
-  [[gnu::always_inline]] inline void
-  init(const std::source_location &loc) noexcept {
+  [[gnu::always_inline]] inline auto
+  init(const std::source_location &loc) noexcept -> Expected<void> {
+    // Validate required options
+    Assert(_options.block_alloc != nullptr, "block_alloc is required");
+    Assert(_options.block_dealloc != nullptr, "block_dealloc is required");
+    Assert(_options.normal_block_size > 0, "normal_block_size must be > 0");
+    Assert(_options.huge_block_size > 0, "huge_block_size must be > 0");
+    Assert(_options.suggested_init_block_size > 0,
+           "suggested_init_block_size must be > 0");
+
     try {
       _resource = new memory_resource{this};
     } catch (std::bad_alloc &ex) {
       _resource = nullptr;
-      _options.logger_func("new memory resource failed while Arena::init");
+      if (_options.logger_func != nullptr) {
+        _options.logger_func("new memory resource failed while Arena::init");
+      }
+      return std::unexpected(ArenaError::ResourceInitFailed);
     }
     if (_options.on_arena_init != nullptr) [[unlikely]] {
       _cookie = _options.on_arena_init(this, loc);
     }
+    return {};
   }
 
   /*
    * new a block within the arena.
    * New Block while current Block has not enough memory.
+   * Returns Expected<Block*> for monadic error handling.
    */
-  auto newBlock(uint64_t min_bytes, Block *prev_block) noexcept -> Block *;
+  auto newBlock(uint64_t min_bytes, Block *prev_block) noexcept
+      -> Expected<Block *>;
 
   /*
    * internal allocate aligned impl.
+   * Returns Expected<char*> for monadic error handling.
    */
   auto allocateAligned(uint64_t bytes, uint64_t alignment = kByteSize) noexcept
-      -> char *;
+      -> Expected<char *>;
 
   /*
    * check if needed a new block
@@ -608,19 +739,21 @@ private:
 
   /*
    * add A Cleanup node to current block.
+   * Returns Expected<void> for monadic error handling.
    */
   [[nodiscard]] auto addCleanup(void *obj, void (*cleanup)(void *)) noexcept
-      -> bool {
-    if (need_create_new_block(kCleanupNodeSize, kByteSize)) [[unlikely]] {
-      Block *curr = newBlock(kCleanupNodeSize, _last_block);
-      if (curr != nullptr) {
-        _last_block = curr;
-      } else {
-        return false;
+      -> Expected<void> {
+    auto ensure_space = [&, this]() -> Expected<void> {
+      if (!need_create_new_block(kCleanupNodeSize, kByteSize)) {
+        return {};
       }
-    }
-    _last_block->register_cleanup(obj, cleanup);
-    return true;
+      return newBlock(kCleanupNodeSize, _last_block)
+          .transform([&, this](Block *block) { _last_block = block; });
+    };
+
+    return ensure_space().transform([&, this]() {
+      _last_block->register_cleanup(obj, cleanup);
+    });
   }
 
   /*
@@ -633,22 +766,21 @@ private:
 
   template <typename T>
   [[nodiscard, gnu::always_inline]] inline auto
-  RegisterDestructor(T *ptr) noexcept -> bool {
+  RegisterDestructor(T *ptr) noexcept -> Expected<void> {
     return RegisterDestructorInternal(
         ptr, typename ArenaHelper<T>::is_destructor_skippable::type());
   }
 
   template <typename T>
-  [[nodiscard, gnu::always_inline]] inline auto
-  RegisterDestructorInternal(T * /*unused*/,
-                             ::std::true_type /*unused*/) noexcept -> bool {
-    return true;
+  [[nodiscard, gnu::always_inline]] inline auto RegisterDestructorInternal(
+      T * /*unused*/, ::std::true_type /*unused*/) noexcept -> Expected<void> {
+    return {};
   }
 
   template <typename T>
   [[nodiscard, gnu::always_inline]] inline auto
   RegisterDestructorInternal(T *ptr, ::std::false_type /*unused*/) noexcept
-      -> bool {
+      -> Expected<void> {
     return addCleanup(ptr, &arena_destruct_object<T>);
   }
 
