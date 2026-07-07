@@ -19,6 +19,15 @@
 #include <algorithm>
 #include <limits>
 
+#if defined(STDB_USE_FMT_MODULE)
+#ifndef ARENA_FMT_IMPORTED
+#define ARENA_FMT_IMPORTED 1
+import fmt;
+#endif
+#else
+#include <fmt/format.h>
+#endif
+
 namespace arena {
 
 /*
