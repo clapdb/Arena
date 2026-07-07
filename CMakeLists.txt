@@ -22,7 +22,9 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-declarations -Wno-error=
 # Add include directories
 include_directories(include)
 include_directories(doctest)
-include_directories(fmt/include)
+if(NOT TARGET fmt::fmt)
+    include_directories(fmt/include)
+endif()
 
 # Add subdirectories
 add_subdirectory(src)

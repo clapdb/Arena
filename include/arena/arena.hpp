@@ -25,7 +25,6 @@
 #include <cstdlib>   // for free, malloc, size_t
 #include <exception> // for type_info
 #include <expected>  // for std::expected
-#include <fmt/format.h>
 #include <iostream>        // for endl, basic_ostream, cerr
 #include <limits>          // for numeric_limits
 #include <new>             // for operator new, bad_alloc
@@ -67,6 +66,9 @@ enum class ArenaError : uint8_t {
  * Enables monadic error handling with and_then/transform/or_else.
  */
 template <typename T> using Expected = std::expected<T, ArenaError>;
+
+[[nodiscard]] auto format_create_array_overflow(uint64_t num, const char *type_name, uint64_t type_size)
+    -> std::string;
 
 static void default_logger_func(const std::string &output) {
   std::cerr << output << std::endl;
@@ -589,10 +591,7 @@ public:
   {
     if (num > std::numeric_limits<uint64_t>::max() / sizeof(T)) {
       auto output_message =
-          fmt::format("CreateArray need too many memory, that more than max of "
-                      "uint64_t, the num of array is {}, and the Type "
-                      "is {}, sizeof T is {}",
-                      num, typeid(T).name(), sizeof(T));
+          format_create_array_overflow(num, typeid(T).name(), sizeof(T));
       _options.logger_func(output_message);
       return std::unexpected(ArenaError::OverflowDetected);
     }
