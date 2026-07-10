@@ -70,7 +70,7 @@ template <typename T> using Expected = std::expected<T, ArenaError>;
 [[nodiscard]] auto format_create_array_overflow(uint64_t num, const char *type_name, uint64_t type_size)
     -> std::string;
 
-static void default_logger_func(const std::string &output) {
+inline void default_logger_func(const std::string &output) {
   std::cerr << output << std::endl;
 }
 

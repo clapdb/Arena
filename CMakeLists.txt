@@ -9,7 +9,9 @@ project(Arena
 # Set C++23 standard (required for std::expected)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+if(NOT DEFINED CMAKE_CXX_EXTENSIONS)
+    set(CMAKE_CXX_EXTENSIONS OFF)
+endif()
 
 # Set default build type to Release if not specified
 if(NOT CMAKE_BUILD_TYPE)
