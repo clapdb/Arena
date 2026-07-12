@@ -32,6 +32,13 @@ using ::arena::align::kMinAlignSize;
 }
 
 export namespace stdb::memory::literals {
+// The literal operators AND the constexpr helpers they are built on. A consumer that swaps
+// `#include "arena/memory.hpp"` for `import arena;` must not lose is_digit()/stoi() -- they are public
+// (tests/memory_test.cc exercises them), and leaving them out makes the module a non-drop-in
+// replacement for the header.
+using ::stdb::memory::literals::is_digit;
+using ::stdb::memory::literals::stoi;
+using ::stdb::memory::literals::stoi_impl;
 using ::stdb::memory::literals::operator""_GB;
 using ::stdb::memory::literals::operator""_KB;
 using ::stdb::memory::literals::operator""_MB;
