@@ -29,7 +29,10 @@ constexpr auto stoi_impl(const char* str, uint64_t value = 0) -> uint64_t {
 }
 
 constexpr auto stoi(const char* str) -> uint64_t { return stoi_impl(str); }
-constexpr uint64_t kilo = (1ULL << 10ULL);
+// `inline`, because a namespace-scope constexpr variable is const and therefore has *internal* linkage,
+// and a name with internal linkage cannot be exported from a module. Without this, arena.cppm simply
+// cannot re-export kilo, and `import arena;` is not a drop-in replacement for this header.
+inline constexpr uint64_t kilo = (1ULL << 10ULL);
 // NOLINTNEXTLINE(bugprone-exception-escape)
 inline constexpr auto operator""_KB(const char* uint_str) noexcept -> uint64_t { return stoi(uint_str) * kilo; }
 // NOLINTNEXTLINE(bugprone-exception-escape)

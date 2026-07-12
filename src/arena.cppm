@@ -37,6 +37,7 @@ export namespace stdb::memory::literals {
 // (tests/memory_test.cc exercises them), and leaving them out makes the module a non-drop-in
 // replacement for the header.
 using ::stdb::memory::literals::is_digit;
+using ::stdb::memory::literals::kilo;
 using ::stdb::memory::literals::stoi;
 using ::stdb::memory::literals::stoi_impl;
 using ::stdb::memory::literals::operator""_GB;
