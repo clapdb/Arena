@@ -405,6 +405,9 @@ public:
       for (; node < last; ++node) {
         node->cleanup(node->element);
       }
+      // Cleanup nodes are one-shot; this also prevents Reset from running them
+      // again after Arena has already cleaned every block.
+      _limit = _size;
     }
 
     [[nodiscard, gnu::always_inline]] inline auto cleanups() const noexcept
@@ -788,15 +791,23 @@ private:
    */
   auto free_all_blocks() noexcept -> uint64_t {
     Block *curr = _last_block;
-    Block *prev = nullptr;
     uint64_t remain_size = 0;
 
+    // Preserve the pre-cleanup remain metric before consuming cleanup nodes.
     while (curr != nullptr) {
-      prev = curr->prev();
-      // add the size of curr blk.
       remain_size += curr->remain();
-      // run all cleanups first
+      curr = curr->prev();
+    }
+
+    // Keep every block alive until every object cleanup has completed. A
+    // destructor in an older block may refer to PMR storage in a newer block.
+    for (curr = _last_block; curr != nullptr; curr = curr->prev()) {
       curr->run_cleanups();
+    }
+
+    curr = _last_block;
+    while (curr != nullptr) {
+      Block *prev = curr->prev();
       _options.block_dealloc(curr);
       curr = prev;
     }
@@ -809,21 +820,27 @@ private:
    */
   auto free_blocks_except_head() noexcept -> uint64_t {
     Block *curr = _last_block;
-    Block *prev = nullptr;
     uint64_t remain_size = 0;
 
-    while (curr != nullptr && curr->prev() != nullptr) {
-      prev = curr->prev();
-      // add the size of curr blk.
+    // Capture metrics before cleanup nodes are consumed.
+    while (curr != nullptr) {
       remain_size += curr->remain();
-      // run all cleanups first
+      curr = curr->prev();
+    }
+
+    // The retained head can own objects whose storage is in a discarded block,
+    // so clean every block before releasing any of them.
+    for (curr = _last_block; curr != nullptr; curr = curr->prev()) {
       curr->run_cleanups();
+    }
+
+    curr = _last_block;
+    Assert(curr != nullptr, "curr should not be nullptr");
+    while (curr->prev() != nullptr) {
+      Block *prev = curr->prev();
       _options.block_dealloc(curr);
       curr = prev;
     }
-    Assert(curr != nullptr, "curr should not be nullptr");
-    // add the curr blk remain to result
-    remain_size += curr->remain();
     // reset the last_block_ to the first block
     _last_block = curr;
     return remain_size;
