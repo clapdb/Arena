@@ -16,6 +16,8 @@
 
 #include "arena/arena.hpp"
 
+#include <array>           // for array
+#include <cstddef>         // for size_t
 #include <cstdint>         // for uint64_t
 #include <cstdlib>         // for free, malloc
 #include <cstring>         // for memcmp, strcmp
@@ -107,6 +109,141 @@ void cleanup_mock_fn3(void *p) {
 }
 
 thread_local cleanup_mock *mock_cleaners;
+
+struct cross_block_cleanup_state {
+  std::array<void *, 8> blocks{};
+  std::array<std::size_t, 8> block_sizes{};
+  std::array<bool, 8> deallocated{};
+  std::size_t block_count{0};
+  std::size_t holder_block{0};
+  std::size_t item_block{0};
+  uint64_t item_destructor_count{0};
+  bool destructor_after_storage_dealloc{false};
+};
+
+thread_local cross_block_cleanup_state *active_cross_block_cleanup_state;
+
+void *cross_block_alloc(std::size_t size) {
+  if (active_cross_block_cleanup_state == nullptr ||
+      active_cross_block_cleanup_state->block_count >=
+          active_cross_block_cleanup_state->blocks.size()) {
+    std::abort();
+  }
+  void *block = std::malloc(size);
+  if (block == nullptr) {
+    std::abort();
+  }
+  const auto index = active_cross_block_cleanup_state->block_count++;
+  active_cross_block_cleanup_state->blocks[index] = block;
+  active_cross_block_cleanup_state->block_sizes[index] = size;
+  return block;
+}
+
+void cross_block_dealloc(void *block) {
+  if (active_cross_block_cleanup_state == nullptr) {
+    std::abort();
+  }
+  for (std::size_t i = 0; i < active_cross_block_cleanup_state->block_count;
+       ++i) {
+    if (active_cross_block_cleanup_state->blocks[i] == block) {
+      active_cross_block_cleanup_state->deallocated[i] = true;
+      return;
+    }
+  }
+  std::abort();
+}
+
+std::size_t cross_block_index(const cross_block_cleanup_state &state,
+                              const void *ptr) {
+  const auto address = reinterpret_cast<std::uintptr_t>(ptr);
+  for (std::size_t i = 0; i < state.block_count; ++i) {
+    const auto begin = reinterpret_cast<std::uintptr_t>(state.blocks[i]);
+    if (address >= begin && address - begin < state.block_sizes[i]) {
+      return i;
+    }
+  }
+  std::abort();
+}
+
+struct cross_block_cleanup_item {
+  cross_block_cleanup_state *state;
+
+  explicit cross_block_cleanup_item(cross_block_cleanup_state *state_arg)
+      : state(state_arg) {}
+
+  ~cross_block_cleanup_item() {
+    ++state->item_destructor_count;
+    const auto address = reinterpret_cast<std::uintptr_t>(this);
+    for (std::size_t i = 0; i < state->block_count; ++i) {
+      const auto begin = reinterpret_cast<std::uintptr_t>(state->blocks[i]);
+      if (address >= begin && address - begin < state->block_sizes[i] &&
+          state->deallocated[i]) {
+        state->destructor_after_storage_dealloc = true;
+      }
+    }
+  }
+};
+
+struct cross_block_cleanup_holder {
+  ArenaFullManagedTag;
+
+  explicit cross_block_cleanup_holder(Arena &arena)
+      : items(arena.get_memory_resource()) {}
+
+  std::pmr::vector<cross_block_cleanup_item> items;
+};
+
+struct cross_block_cleanup_result {
+  std::size_t holder_block;
+  std::size_t item_block;
+  uint64_t item_destructor_count;
+  bool destructor_after_storage_dealloc;
+};
+
+cross_block_cleanup_result run_cross_block_cleanup_case(bool reset) {
+  cross_block_cleanup_state state;
+  active_cross_block_cleanup_state = &state;
+  auto options = Arena::Options::GetDefaultOptions();
+  options.normal_block_size = 1024;
+  options.suggested_init_block_size = 1024;
+  options.huge_block_size = 4096;
+  options.block_alloc = &cross_block_alloc;
+  options.block_dealloc = &cross_block_dealloc;
+
+  {
+    Arena arena(options);
+    auto holder_result = arena.Create<cross_block_cleanup_holder>();
+    if (!holder_result.has_value()) {
+      std::abort();
+    }
+    auto *holder = holder_result.value();
+    state.holder_block = cross_block_index(state, holder);
+    auto filler_result = arena.AllocateAligned(960);
+    if (!filler_result.has_value()) {
+      std::abort();
+    }
+    holder->items.emplace_back(&state);
+    state.item_block = cross_block_index(state, &holder->items.front());
+    if (state.item_block <= state.holder_block) {
+      std::abort();
+    }
+    if (reset) {
+      (void)arena.Reset();
+    }
+  }
+
+  const cross_block_cleanup_result result{
+      state.holder_block,
+      state.item_block,
+      state.item_destructor_count,
+      state.destructor_after_storage_dealloc,
+  };
+  for (std::size_t i = 0; i < state.block_count; ++i) {
+    std::free(state.blocks[i]);
+  }
+  active_cross_block_cleanup_state = nullptr;
+  return result;
+}
 
 TEST_CASE_FIXTURE(BlockTest, "BlockTest.CotrTest1") {
   auto *b = new (Pointer()) Arena::Block(1024, nullptr);
@@ -647,6 +784,20 @@ TEST_CASE_FIXTURE(ArenaTest, "ArenaTest.FreeBlocksTest") {
 
   delete a;
   delete mock;
+}
+
+TEST_CASE("ArenaTest.CleanupBeforeCrossBlockFreeAll") {
+  const auto result = run_cross_block_cleanup_case(false);
+  CHECK(result.holder_block < result.item_block);
+  CHECK_EQ(result.item_destructor_count, 1ULL);
+  CHECK_FALSE(result.destructor_after_storage_dealloc);
+}
+
+TEST_CASE("ArenaTest.CleanupBeforeCrossBlockReset") {
+  const auto result = run_cross_block_cleanup_case(true);
+  CHECK(result.holder_block < result.item_block);
+  CHECK_EQ(result.item_destructor_count, 1ULL);
+  CHECK_FALSE(result.destructor_after_storage_dealloc);
 }
 
 TEST_CASE_FIXTURE(ArenaTest, "ArenaTest.DoCleanupTest") {
